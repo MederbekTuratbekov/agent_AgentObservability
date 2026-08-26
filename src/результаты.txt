@@ -1,0 +1,19 @@
+C:\Users\Neo\PyCharm\ml\agent\agent-observability\.venv\Scripts\python.exe C:\Users\Neo\PyCharm\ml\agent\agent-observability\src\main.py
+Вопрос: Кто создал Python?
+Токенов в запросе: 10
+
+=== Trace: agent_run_1787779715 ===
+Всего событий: 1
+Общее время: 556.9 ms
+
+  [llm_call] agent — 500.4ms
+Трейс сохранён: agent_run_1787779715_1787779715.json
+
+Оценка через LLM-as-judge...
+Вердикт: correct
+Обоснование: Ответ агента правильно указывает на Гвидо ван Россума как создателя Python, что соответствует эталонному ответу.
+
+=== Финальный результат ===
+{'question': 'Кто создал Python?', 'answer': 'Python был создан Гвидо ван Россумом.', 'verdict': 'correct', 'reasoning': 'Ответ агента правильно указывает на Гвидо ван Россума как создателя Python, что соответствует эталонному ответу.', 'token_count': 10, 'trace_path': 'agent_run_1787779715_1787779715.json'}
+
+Process finished with exit code 0
