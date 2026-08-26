@@ -1,17 +1,12 @@
 """
 Trace logging — записываем каждый шаг работы агента для отладки.
 
-Зачем: когда агент делает 5-6 шагов подряд (reasoning, tool calls),
+Зачем: когда агент делает несколько шагов подряд (reasoning, tool calls),
 без логов невозможно понять ГДЕ он ошибся — на этапе рассуждения,
 выбора инструмента, или интерпретации результата.
 
-Здесь — упрощённая обёртка в стиле Langfuse/LangSmith:
-каждый вызов LLM или tool записывается со временем выполнения
-и сохраняется в JSON для последующего анализа.
-
-В реальном проекте используй Langfuse (pip install langfuse) —
-готовая платформа с UI для просмотра трейсов. Здесь — минимальная
-версия для понимания концепции.
+Здесь — упрощённая обёртка в стиле Langfuse/LangSmith: каждый вызов LLM
+или tool записывается со временем выполнения и сохраняется в JSON.
 """
 
 import json
@@ -43,7 +38,7 @@ class TraceLogger:
             "timestamp": datetime.now().isoformat(),
             "event_type": event_type,
             "name": name,
-            "input": str(input_data)[:500],   # обрезаем, чтобы не раздувать лог
+            "input": str(input_data)[:500],
             "output": str(output_data)[:500],
             "duration_ms": round(duration_ms, 1),
         })
@@ -95,19 +90,3 @@ class TraceLogger:
 
         for e in self.events:
             print(f"  [{e['event_type']}] {e['name']} — {e['duration_ms']}ms")
-
-
-if __name__ == "__main__":
-    # демонстрация использования
-    tracer = TraceLogger("demo_agent_run")
-
-    with tracer.span("llm_call", "gpt-4o-mini", input_data="Сколько будет 2+2?") as record:
-        time.sleep(0.3)  # имитация задержки API
-        record("Нужно вызвать calculator")
-
-    with tracer.span("tool_call", "calculator", input_data="2+2") as record:
-        time.sleep(0.05)
-        record("4")
-
-    tracer.print_summary()
-    tracer.save()

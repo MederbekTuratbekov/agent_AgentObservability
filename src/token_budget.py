@@ -12,8 +12,9 @@ Sliding window — простое решение: храним только по
 
 import tiktoken
 
-# кодировка для gpt-4o-mini и большинства современных моделей OpenAI
-ENCODING = tiktoken.get_encoding("cl100k_base")
+# o200k_base — кодировка для GPT-4o и GPT-4o-mini
+# (cl100k_base подходит только для GPT-4 / GPT-3.5, для gpt-4o-mini она даст неточный подсчёт)
+ENCODING = tiktoken.get_encoding("o200k_base")
 
 
 def count_tokens(text: str) -> int:
@@ -27,7 +28,6 @@ def count_messages_tokens(messages: list[dict]) -> int:
 
     +4 токена на сообщение — грубая оценка накладных расходов
     на служебные токены роли (role: system/user/assistant).
-    Для точного подсчёта в проде используй tiktoken рекомендации OpenAI.
     """
     total = 0
     for msg in messages:
@@ -61,7 +61,6 @@ def apply_sliding_window(
     system_tokens = count_tokens(system_msg["content"]) + 4 if system_msg else 0
     budget = max_tokens - system_tokens
 
-    # идём с конца (самые свежие сообщения) и набираем, пока хватает бюджета
     kept_reversed = []
     used_tokens = 0
 
@@ -76,22 +75,3 @@ def apply_sliding_window(
 
     result = [system_msg] + kept if system_msg else kept
     return result
-
-
-if __name__ == "__main__":
-    sample_messages = [
-        {"role": "system", "content": "Ты — полезный ассистент."},
-        {"role": "user", "content": "Привет, расскажи про Python."},
-        {"role": "assistant", "content": "Python — это язык программирования." * 50},
-        {"role": "user", "content": "А что насчёт FastAPI?"},
-        {"role": "assistant", "content": "FastAPI — это веб-фреймворк." * 50},
-        {"role": "user", "content": "Спасибо, последний вопрос: что такое Docker?"},
-    ]
-
-    total = count_messages_tokens(sample_messages)
-    print(f"Всего токенов в истории: {total}")
-
-    trimmed = apply_sliding_window(sample_messages, max_tokens=100)
-    print(f"\nПосле sliding window (budget=100): {len(trimmed)} сообщений из {len(sample_messages)}")
-    for m in trimmed:
-        print(f"  [{m['role']}] {m['content'][:50]}...")

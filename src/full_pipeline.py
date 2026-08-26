@@ -1,17 +1,13 @@
 """
-Финальная сборка проекта 5 — и всего блока agent_junior.
+Финальная сборка проекта — соединяем три слоя наблюдаемости вместе.
 
-Берём агента из проекта 3 (langgraph_memory), оборачиваем в:
+Берём агента (например, из отдельного проекта с LangGraph), оборачиваем в:
   - trace logging (видим каждый шаг)
   - token budget проверку (не превышаем лимит контекста)
   - LLM-as-judge оценку (проверяем качество финальных ответов)
 
 Это уже близко к тому, как выглядит production-ready
 мини-агент, а не просто учебный скрипт.
-
-Примечание: для полного запуска нужны файлы из проекта 3
-(graph.py, state.py, tools.py) — либо скопируй их сюда,
-либо запускай этот файл из объединённой папки со всеми частями.
 """
 
 import time
@@ -28,8 +24,13 @@ def run_agent_with_observability(question: str, reference_answer: str, run_agent
         2. Логируем через trace_logger
         3. После получения ответа — оцениваем через LLM-judge
 
-    run_agent_fn — функция агента (например run_agent из graph.py проекта 3),
-    принимает question, возвращает ответ строкой.
+    run_agent_fn — функция агента, принимает question, возвращает ответ строкой.
+
+    Примечание: sliding window здесь считает бюджет и обрезает messages,
+    но сам run_agent_fn принимает только question (строку), а не список
+    messages — поэтому обрезанный контекст пока не передаётся в вызов
+    агента напрямую. Если твой агент умеет принимать историю сообщений,
+    передавай в него именно `messages`, а не только `question`.
     """
     tracer = TraceLogger(f"agent_run_{int(time.time())}")
 
@@ -63,29 +64,3 @@ def run_agent_with_observability(question: str, reference_answer: str, run_agent
         "token_count": token_count,
         "trace_path": trace_path,
     }
-
-
-def demo_run():
-    """
-    Демонстрация без реального вызова графа (заглушка вместо LangGraph-агента),
-    чтобы файл можно было проверить без поднятия Redis/pgvector.
-
-    Для реального прогона замени mock_agent на run_agent из
-    langgraph_memory/graph.py
-    """
-    def mock_agent(question: str) -> str:
-        time.sleep(0.5)  # имитация задержки реального вызова
-        return "Python был создан Гвидо ван Россумом."
-
-    result = run_agent_with_observability(
-        question="Кто создал Python?",
-        reference_answer="Guido van Rossum",
-        run_agent_fn=mock_agent,
-    )
-
-    print("\n=== Финальный результат ===")
-    print(result)
-
-
-if __name__ == "__main__":
-    demo_run()

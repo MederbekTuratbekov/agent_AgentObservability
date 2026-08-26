@@ -3,18 +3,21 @@ LLM-as-judge — используем LLM для оценки качества �
 (или того же агента), там где точное сравнение строк не работает.
 
 Когда это нужно:
-  - в проекте 1 мы сравнивали строки напрямую (squad с коротким ответом)
-  - но если ответ агента — целое предложение, а не одно слово,
-    точное сравнение не работает: "Париж" и "Столица Франции — Париж"
+  - если ответ агента — целое предложение, а не одно слово,
+    точное сравнение строк не работает: "Париж" и "Столица Франции — Париж"
     формально разные строки, но оба правильные
   - LLM-судья читает вопрос + ответ + правильный ответ и решает:
     это по сути верно или нет
 """
 
 import json
+from enum import Enum
+
+from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, Field
-from enum import Enum
+
+load_dotenv()  # чтобы модуль сам находил OPENAI_API_KEY, даже если его импортировали не через main.py
 
 client = OpenAI()
 JUDGE_MODEL = "gpt-4o-mini"
@@ -107,24 +110,3 @@ def judge_batch(items: list[dict]) -> dict:
             "correct_rate": round(correct / total, 3) if total else 0.0,
         },
     }
-
-
-if __name__ == "__main__":
-    # демонстрация на нескольких примерах
-    demo_items = [
-        {
-            "question": "Кто создал язык программирования Python?",
-            "agent_answer": "Python был создан Гвидо ван Россумом в начале 90-х.",
-            "reference_answer": "Guido van Rossum",
-        },
-        {
-            "question": "Сколько будет 15% от 200?",
-            "agent_answer": "Примерно 25",
-            "reference_answer": "30",
-        },
-    ]
-
-    report = judge_batch(demo_items)
-    print(f"\n=== Итог ===")
-    print(f"Correct rate: {report['summary']['correct_rate']*100:.1f}%")
-    print(json.dumps(report["summary"], ensure_ascii=False, indent=2))

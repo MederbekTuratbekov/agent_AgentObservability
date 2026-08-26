@@ -50,6 +50,8 @@ python full_pipeline.py       # всё вместе (с mock-агентом по
 agent-observability/
 ├── README.md
 ├── requirements.txt
+├── .env
+├── .env.example
 ├── .gitignore
 └── src/
     ├── main.py
