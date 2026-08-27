@@ -1,79 +1,159 @@
-# Eval + Context + Debug
+# Agent Observability
 
-Часть 5 из 5 — финал серии проектов по блоку `agent_junior`.
+Три слоя наблюдаемости для LLM-агентов, собранные вручную (в стиле Langfuse/LangSmith), без внешних SaaS: **trace logging**, **token budget / sliding window** и **LLM-as-judge** оценка качества ответов.
 
-## Problem
+## Место в линейке проектов
 
-Агент из проектов 2–4 работает, но без наблюдаемости:
-не видно сколько токенов уходит в контекст, что происходит
-на каждом шаге, и насколько хорош финальный ответ по смыслу
-(не по точному совпадению строк, как в проекте 1).
+Пятый проект серии — здесь агент (из [проекта 3 на LangGraph](https://github.com/MederbekTuratbekov/agent_LanggraphAgentMemory.git)) оборачивается инфраструктурой, без которой любой агент — чёрный ящик: непонятно, где он ошибся, сколько стоил вызов и насколько хорош был ответ.
 
-## Approach
+## Зачем три отдельных слоя, а не один
 
-- **Token budget**: подсчёт токенов через `tiktoken`,
-  `sliding_window` обрезает старую историю, сохраняя system message
-  и самые свежие сообщения
-- **Trace logging**: `TraceLogger` в стиле Langfuse — записывает
-  каждый LLM/tool вызов со временем выполнения, сохраняет в JSON
-- **LLM-as-judge**: отдельная модель оценивает ответы агента
-  по вердиктам correct / partially_correct / incorrect —
-  нужно там, где точное сравнение строк (как в проекте 1) не работает
-- `full_pipeline.py` оборачивает вызов агента всеми тремя слоями сразу
+| Слой | Отвечает на вопрос |
+|---|---|
+| **Trace logging** | Что именно произошло на каждом шаге и сколько это заняло? |
+| **Token budget** | Не упрёмся ли в лимит контекста модели? |
+| **LLM-as-judge** | Ответ реально правильный — или просто похож на правильный? |
 
-## Results
+Каждый слой решает свою проблему независимо и может использоваться отдельно от двух других.
 
-`full_pipeline.py` выводит: число токенов в запросе, полный трейс
-шагов агента, вердикт LLM-судьи с обоснованием.
+## Trace logging
 
-## How to run
+Записывает последовательность событий (LLM-вызовы, tool-вызовы) с временными метками — без этого невозможно понять, где агент ошибся: на этапе рассуждения, выбора инструмента или интерпретации результата.
 
-```bash
-pip install -r requirements.txt
+```python
+tracer = TraceLogger("agent_run")
 
-# Windows PowerShell:
-$env:OPENAI_API_KEY="твой_ключ"
+with tracer.span("llm_call", "agent", input_data=question) as record:
+    answer = run_agent_fn(question)
+    record(answer)
 
-python token_budget.py     # демо sliding window
-python trace_logger.py      # демо trace logging
-python llm_judge.py          # демо LLM-as-judge
-python full_pipeline.py       # всё вместе (с mock-агентом по умолчанию)
+tracer.print_summary()
+tracer.save()  # -> agent_run_<timestamp>.json
 ```
 
-Чтобы подключить реального агента из проекта 3 вместо mock:
-в `full_pipeline.py` замени `mock_agent` на `run_agent`
-из `langgraph_memory/graph.py`.
+`span()` — context manager, сам замеряет время выполнения блока и пишет событие в трейс. Каждый трейс сохраняется в JSON для последующего анализа — вход, выход (обрезанные до 500 символов) и длительность каждого шага.
+
+## Token budget + sliding window
+
+У любой модели есть лимит контекста. Sliding window — простое решение: обрезаем историю сообщений, чтобы уложиться в бюджет, **сохраняя system message и самые свежие сообщения**, а не самые старые.
+
+```python
+token_count = count_messages_tokens(messages)
+
+if token_count > 4000:
+    messages = apply_sliding_window(messages, max_tokens=4000)
+```
+
+Подсчёт токенов — через `tiktoken` с кодировкой `o200k_base` (актуальна для GPT-4o / GPT-4o-mini; `cl100k_base` даёт неточный результат на этих моделях). Обрезка идёт с начала истории — свежий контекст обычно важнее для ответа на текущий вопрос, чем самое старое сообщение диалога.
+
+## LLM-as-judge
+
+Точное сравнение строк не работает, когда ответ агента — целое предложение, а не одно слово: `"Париж"` и `"Столица Франции — Париж"` формально разные строки, но оба правильные. LLM-судья читает вопрос, ответ и эталон, и оценивает **по смыслу**.
+
+```python
+verdict = judge_answer(question, agent_answer, reference_answer)
+# verdict.verdict    -> "correct" | "partially_correct" | "incorrect"
+# verdict.reasoning  -> краткое объяснение вердикта
+```
+
+Судья работает на `temperature=0.0` — для оценочной функции важна стабильность, а не креативность. Есть batch-версия (`judge_batch`) — прогоняет список ответов и считает `correct_rate` по всей выборке.
+
+## Полная сборка (`full_pipeline.py`)
+
+```
+question
+   │
+   ▼
+count_messages_tokens ──► превышен бюджет? ──► apply_sliding_window
+   │
+   ▼
+TraceLogger.span("llm_call") ──► run_agent_fn(question)
+   │
+   ▼
+judge_answer(question, answer, reference_answer)
+   │
+   ▼
+{question, answer, verdict, reasoning, token_count, trace_path}
+```
+
+`run_agent_with_observability()` — точка входа, принимает любую функцию агента (`run_agent_fn: str -> str`) и оборачивает её всеми тремя слоями. По умолчанию в `main.py` используется `mock_agent` — заглушка, чтобы проверить пайплайн без Redis/pgvector; для реального прогона подставляется `run_agent` из проекта 3.
 
 ## Структура проекта
 
 ```
 agent-observability/
-├── README.md
+├── src/
+│   ├── main.py               # точка входа, пример с mock_agent
+│   ├── full_pipeline.py        # сборка всех трёх слоёв вместе
+│   ├── trace_logger.py           # TraceLogger — запись шагов агента
+│   ├── token_budget.py             # подсчёт токенов + sliding window
+│   └── llm_judge.py                  # LLM-as-judge оценка ответов
 ├── requirements.txt
-├── .env
 ├── .env.example
-├── .gitignore
-└── src/
-    ├── main.py
-    ├── token_budget.py     # подсчёт токенов + sliding window
-    ├── trace_logger.py       # TraceLogger — запись шагов агента
-    ├── llm_judge.py             # LLM-as-judge оценка качества ответов
-    └── full_pipeline.py           # сборка всех трёх слоёв вместе
+└── .gitignore
 ```
 
-## Итог блока agent_junior
+## Установка
 
-Все 5 тем закрыты пятью проектами:
+```bash
+git clone https://github.com/<username>/agent-observability.git
+cd agent-observability
+pip install -r requirements.txt
+```
 
-| Проект | Темы agent_junior |
-|---|---|
-| 1. llm_basics_prompting | llm_basics, prompting |
-| 2. tool_calling_react | tool_calling (core), ReAct pattern |
-| 3. langgraph_memory | LangGraph базовый, agent memory |
-| 4. rag_basics | rag_basics — полностью |
-| 5. eval_context_debug | context, eval_debug |
+Создай `.env` на основе `.env.example`:
 
-Что не вошло явно ни в один проект: multi-agent basics
-(orchestrator-worker концептуально) — это следующий логичный шаг
-после закрытия agent_junior, естественный переход к более
-сложным темам.
+```
+OPENAI_API_KEY=sk-...
+```
+
+## Запуск
+
+```bash
+python src/main.py
+```
+
+Прогоняет один вопрос через `mock_agent`, показывая все три слоя в работе:
+
+```
+Вопрос: Кто создал Python?
+Токенов в запросе: 12
+
+=== Trace: agent_run_1735000000 ===
+Всего событий: 1
+Общее время: 512.3 ms
+
+  [llm_call] agent — 501.2ms
+Трейс сохранён: agent_run_1735000000_1735000000.json
+
+Оценка через LLM-as-judge...
+Вердикт: correct
+Обоснование: Ответ верно называет Гвидо ван Россума создателем Python.
+
+=== Финальный результат ===
+{'question': 'Кто создал Python?', 'answer': '...', 'verdict': 'correct', ...}
+```
+
+Чтобы подключить настоящего агента вместо заглушки — замени `mock_agent` в `main.py` на `run_agent` из `langgraph_memory/graph.py` (проект 3); потребуются также `state.py` и `tools.py` из того проекта, плюс поднятый Redis.
+
+## Известное ограничение
+
+`apply_sliding_window` обрезает и возвращает список `messages`, но `run_agent_fn` в текущей сборке принимает только `question` (строку) — обрезанный контекст пока не передаётся в сам вызов агента напрямую. Если агент умеет принимать историю сообщений целиком, стоит передавать в него именно `messages`, а не только `question`.
+
+## Технологии
+
+- **`tiktoken`** — точный подсчёт токенов под конкретную модель
+- **OpenAI API** (`gpt-4o-mini`) — LLM-судья, `response_format=json_object`
+- **Pydantic** — строгая схема вердикта судьи (`JudgeResult`)
+- **`contextlib.contextmanager`** — замер времени через `with tracer.span(...)`
+
+## Возможные улучшения
+
+- [ ] Передавать обрезанный `messages` в `run_agent_fn`, а не только `question`
+- [ ] Дашборд поверх сохранённых трейсов (сейчас — только консоль + JSON)
+- [ ] Логирование стоимости запроса (токены × цена модели) в трейс
+- [ ] Сравнение нескольких LLM-судей между собой на одном наборе ответов
+
+## Лицензия
+
+MIT
